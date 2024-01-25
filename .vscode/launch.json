@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python: train_net.py",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/train_net.py",
+      "console": "integratedTerminal",
+      "args": [
+        "--num-gpus",
+        "1",
+        "--config-file",
+        "configs/diffinst.coco.res50.yaml"
+      ],
+      "justMyCode": false
+    }
+  ]
+}

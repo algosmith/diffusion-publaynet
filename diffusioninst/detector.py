@@ -22,6 +22,8 @@ from collections import namedtuple
 import torch
 import torch.nn.functional as F
 from torch import nn
+import matplotlib.pyplot as plt
+import numpy as np
 
 from detectron2.layers import batched_nms
 from detectron2.modeling import META_ARCH_REGISTRY, build_backbone#, detector_postprocess
@@ -322,6 +324,7 @@ class DiffusionInst(nn.Module):
 
         pixel_mean = torch.Tensor(cfg.MODEL.PIXEL_MEAN).to(self.device).view(3, 1, 1)
         pixel_std = torch.Tensor(cfg.MODEL.PIXEL_STD).to(self.device).view(3, 1, 1)
+        print ("tensor sizes: ", pixel_mean.size(), pixel_std.size())
         self.normalizer = lambda x: (x - pixel_mean) / pixel_std
         self.to(self.device)
 
@@ -497,6 +500,12 @@ class DiffusionInst(nn.Module):
         """
         #import pdb;pdb.set_trace()
         images, images_whwh = self.preprocess_image(batched_inputs)
+        # print ("images: ", images[0])
+        # image_numpy = images[0].cpu().numpy()
+        # if image_numpy.shape[0] == 3:
+        #     image_numpy = image_numpy.transpose(1, 2, 0)
+        # plt.imshow(image_numpy)
+        # plt.show()
         if isinstance(images, (list, torch.Tensor)):
             images = nested_tensor_from_tensor_list(images)
 
@@ -515,6 +524,7 @@ class DiffusionInst(nn.Module):
         if self.training:
             gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
             targets, x_boxes, noises, t = self.prepare_targets(gt_instances)
+            print ("type of targets: ", type(targets), type (x_boxes))
             t = t.squeeze(-1)
             x_boxes = x_boxes * images_whwh[:, None, :]
             #import pdb;pdb.set_trace()
@@ -574,6 +584,9 @@ class DiffusionInst(nn.Module):
         noise = torch.randn(self.num_proposals, 4, device=self.device)
 
         num_gt = gt_boxes.shape[0]
+        if num_gt > 1:
+            plt.imshow(gt_boxes[0].cpu().numpy())
+            plt.show()
         if not num_gt:  # generate fake gt boxes if empty gt boxes
             gt_boxes = torch.as_tensor([[0.5, 0.5, 1., 1.]], dtype=torch.float, device=self.device)
             num_gt = 1
@@ -629,6 +642,11 @@ class DiffusionInst(nn.Module):
             
             target["labels"] = gt_classes.to(self.device)
             target["boxes"] = gt_boxes.to(self.device)
+            target_box_numpy = gt_boxes.cpu().numpy()
+            if target_box_numpy.shape[0] == 3:
+                target_box_numpy = target_box_numpy.transpose(1, 2, 0)
+            #plt.imshow(target_box_numpy)
+            print ("shape", d_boxes.cpu().numpy().shape)
             #import pdb;pdb.set_trace()
              #BitMasks.from_polygon_masks(targets_per_image.gt_masks,h,w)
             target["masks"] = bitmask.to(self.device)
@@ -638,6 +656,8 @@ class DiffusionInst(nn.Module):
             target["image_size_xyxy_tgt"] = image_size_xyxy_tgt.to(self.device)
             target["area"] = targets_per_image.gt_boxes.area().to(self.device)
             new_targets.append(target)
+            #plt.show()
+
 
         return new_targets, torch.stack(diffused_boxes), torch.stack(noises), torch.stack(ts)
 
@@ -763,6 +783,12 @@ class DiffusionInst(nn.Module):
         """
         Normalize, pad and batch the input images.
         """
+        print ("tensor x size", batched_inputs[0]["image"].size())
+        image_numpy = batched_inputs[0]["image"].cpu().numpy()
+        if image_numpy.shape[0] == 3:
+            image_numpy = image_numpy.transpose(1, 2, 0)
+        plt.imshow(image_numpy)
+        plt.show()
         images = [self.normalizer(x["image"].to(self.device)) for x in batched_inputs]
         images = ImageList.from_tensors(images, self.size_divisibility)
 

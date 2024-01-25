@@ -16,7 +16,8 @@ import weakref
 from typing import Any, Dict, List, Set
 import logging
 from collections import OrderedDict
-
+import random
+import numpy as np
 import torch
 from fvcore.nn.precise_bn import get_bn_modules
 
@@ -30,11 +31,109 @@ from detectron2.engine import DefaultTrainer, default_argument_parser, default_s
 from detectron2.evaluation import COCOEvaluator, LVISEvaluator, verify_results
 from detectron2.solver.build import maybe_add_gradient_clipping
 from detectron2.modeling import build_model
+from detectron2.data import DatasetCatalog, MetadataCatalog
 
 from diffusioninst import DiffusionInstDatasetMapper, add_diffusioninst_config, DiffusionInstWithTTA
 from diffusioninst.util.model_ema import add_model_ema_configs, may_build_model_ema, may_get_ema_checkpointer, EMAHook, \
     apply_model_ema_and_restore, EMADetectionCheckpointer
 
+from train_pubnet  import build_publaynet_train_dataloader
+from torch.utils.data import Dataset
+from detectron2.data import detection_utils as utils
+from datadings.reader import MsgpackReader
+from torchvision.transforms import Compose, Resize
+from pathlib import Path
+import numpy as np
+from detectron2.structures import BoxMode
+import io
+import PIL
+
+class TorchMsgpackDataset(Dataset):
+    def __init__(
+        self,
+        root_path="/home/raushan/dataset/",
+        split="train",
+        transforms=None,
+        image_size=256,
+    ):
+        self.root_path = Path(root_path)
+        self.crop_gen = None
+        self.tfm_gens = []
+        self.data_reader = MsgpackReader(self.root_path / f"publaynet-{split}.msgpack")
+        if transforms is not None:
+            self.transforms = transforms
+        else:
+            self.transforms = Compose([Resize(image_size)])
+
+    def __getitem__(self, index):
+        sample = self.data_reader[index]
+        # sample["objects"]["bbox_mode"] = BoxMode.XYXY_ABS
+        sample["image"] = PIL.Image.open(io.BytesIO(sample["image"]["bytes"]))
+        sample["image"] = self.transforms(sample["image"])
+        ## convert pil image to numpy array
+        sample["image"] = np.array(sample["image"])
+        ## change shape
+        image = sample["image"]
+        image_shape = sample["image"].shape
+        image_shape = (image_shape[0], image_shape[1])
+        sample["image"] = torch.from_numpy(sample["image"]).permute(2, 0, 1)
+        #print(len(sample["objects"]))
+        #print("iamge shape", image_shape)
+        annos = sample["objects"]
+        for obj in annos:
+            obj["bbox_mode"] = BoxMode.XYXY_ABS
+
+        # if np.random.rand() > 0.5:
+        #     image, transforms = T.apply_transform_gens(self.tfm_gens, image)
+        # else:
+        #     image, transforms = T.apply_transform_gens(
+        #         self.tfm_gens[:-1] + self.crop_gen + self.tfm_gens[-1:], image
+        #     )
+        ## change this properly.
+        # annos = [
+        #     utils.transform_instance_annotations(obj, self.transforms, image_shape)
+        #     for obj in sample.pop("objects")
+        #     if obj.get("iscrowd", 0) == 0
+        # ]
+        instances = utils.annotations_to_instances(
+            annos, image_shape, mask_format="bitmask"
+        )
+        sample["instances"] = utils.filter_empty_instances(instances)
+        return sample
+
+    def __len__(self):
+        return len(self.data_reader)
+
+def seed_all_rng(seed=None):
+    """
+    Set the random seed for the RNG in torch, numpy and python.
+
+    Args:
+        seed (int): if None, will use a strong random seed.
+    """
+    if seed is None:
+        seed = (
+            os.getpid()
+            + int(datetime.now().strftime("%S%f"))
+            + int.from_bytes(os.urandom(2), "big")
+        )
+        logger = logging.getLogger(__name__)
+        logger.info("Using a generated random seed {}".format(seed))
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+
+
+def trivial_batch_collator(batch):
+    """
+    A batch collator that does nothing.
+    """
+    return batch
+
+def worker_init_reset_seed(worker_id):
+    initial_seed = torch.initial_seed() % 2**31
+    seed_all_rng(initial_seed + worker_id)
 
 class Trainer(DefaultTrainer):
     """ Extension of the Trainer class adapted to DiffusionInst. """
@@ -113,8 +212,24 @@ class Trainer(DefaultTrainer):
 
     @classmethod
     def build_train_loader(cls, cfg):
-        mapper = DiffusionInstDatasetMapper(cfg, is_train=True)
-        return build_detection_train_loader(cfg, mapper=mapper)
+        from torch.utils.data import DataLoader
+        collate_fn = None
+        # read msgpack
+        dataset = TorchMsgpackDataset(
+            root_path="/home/raushan/dataset/",
+            split="train",
+            transforms=None,
+            image_size=256,
+        )
+
+        return DataLoader(
+            dataset,
+            batch_size=2,
+            drop_last=True,
+            num_workers=2,
+            collate_fn=trivial_batch_collator if collate_fn is None else collate_fn,
+            worker_init_fn=worker_init_reset_seed,
+        )
 
     @classmethod
     def build_optimizer(cls, cfg, model):
@@ -258,8 +373,17 @@ def setup(args):
     default_setup(cfg, args)
     return cfg
 
+def get_my_dataset_dicts():
+    # This function should load the dataset in Detectron2's format
+    # For example, read the JSON annotations and return the data in Detectron2's format
+    pass
 
 def main(args):
+    
+
+    # for d in ["train", "val"]:
+    #     DatasetCatalog.register("my_dataset_" + d, lambda d=d: get_my_dataset_dicts("/home/raushan/workspace/DiffusionInst/datasets/coco/coco_2017_train" + d))
+    #     MetadataCatalog.get("my_dataset_" + d).set(thing_classes=["text", "title", "list", "table", "figure"])
     cfg = setup(args)
 
     if args.eval_only:
