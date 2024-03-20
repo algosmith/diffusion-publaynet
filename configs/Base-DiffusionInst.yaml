@@ -36,7 +36,7 @@ INPUT:
   CROP:
     ENABLED: False
     TYPE: "absolute_range"
-    SIZE: (384, 600)
+    SIZE: (256, 256)          ## original (384, 600)
   FORMAT: "RGB"
 TEST:
   EVAL_PERIOD: 5000

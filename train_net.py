@@ -74,14 +74,14 @@ class TorchMsgpackDataset(Dataset):
         sample["image"] = np.array(sample["image"])
         ## change shape
         image = sample["image"]
-        image_shape = sample["image"].shape
-        image_shape = (image_shape[0], image_shape[1])
+        image_shape = (sample['image_height'], sample['image_width'])
+        #print ("image shape", image_shape)
         sample["image"] = torch.from_numpy(sample["image"]).permute(2, 0, 1)
         #print(len(sample["objects"]))
-        #print("iamge shape", image_shape)
+        print("iamge shape", sample["image"].shape)
         annos = sample["objects"]
         for obj in annos:
-            obj["bbox_mode"] = BoxMode.XYXY_ABS
+            obj["bbox_mode"] = BoxMode.XYWH_ABS
 
         # if np.random.rand() > 0.5:
         #     image, transforms = T.apply_transform_gens(self.tfm_gens, image)
@@ -385,7 +385,7 @@ def main(args):
     #     DatasetCatalog.register("my_dataset_" + d, lambda d=d: get_my_dataset_dicts("/home/raushan/workspace/DiffusionInst/datasets/coco/coco_2017_train" + d))
     #     MetadataCatalog.get("my_dataset_" + d).set(thing_classes=["text", "title", "list", "table", "figure"])
     cfg = setup(args)
-
+    print ("output directory", cfg.OUTPUT_DIR)
     if args.eval_only:
         model = Trainer.build_model(cfg)
         kwargs = may_get_ema_checkpointer(cfg, model)

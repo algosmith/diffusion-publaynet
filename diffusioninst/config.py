@@ -21,7 +21,7 @@ def add_diffusioninst_config(cfg):
     Add config for DiffusionInst
     """
     cfg.MODEL.DiffusionInst = CN()
-    cfg.MODEL.DiffusionInst.NUM_CLASSES = 80
+    cfg.MODEL.DiffusionInst.NUM_CLASSES = 5
     cfg.MODEL.DiffusionInst.NUM_PROPOSALS = 300
 
     # RCNN Head.

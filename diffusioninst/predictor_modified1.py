@@ -4,11 +4,19 @@ import multiprocessing as mp
 from collections import deque
 import cv2
 import torch
-
+from datadings.reader import MsgpackReader
+import numpy as np
+import io
+import PIL
+from pathlib import Path
+import sys
+sys.path.append("../../")
 from detectron2.data import MetadataCatalog
 from detectron2.engine.defaults import DefaultPredictor
 from detectron2.utils.video_visualizer import VideoVisualizer
 from detectron2.utils.visualizer import ColorMode, Visualizer
+from .detector import DiffusionInst
+from torchvision.transforms import Compose, Resize
 
 
 class VisualizationDemo(object):
@@ -35,51 +43,7 @@ class VisualizationDemo(object):
         
         self.threshold = cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST  # workaround
 
-    def detectron_to_fo(outputs, img_w, img_h):
-    # format is documented at https://detectron2.readthedocs.io/tutorials/models.html#model-output-format
-        detections = []
-        instances = outputs["instances"].to("cpu")
-        for pred_box, score, c, mask in zip(
-            instances.pred_boxes, instances.scores, instances.pred_classes, instances.pred_masks,
-        ):
-            x1, y1, x2, y2 = pred_box
-            fo_mask = mask.numpy()[int(y1):int(y2), int(x1):int(x2)]
-            bbox = [float(x1)/img_w, float(y1)/img_h, float(x2-x1)/img_w, float(y2-y1)/img_h]
-            detection = fo.Detection(label="Vehicle registration plate", confidence=float(score), bounding_box=bbox, mask=fo_mask)
-            detections.append(detection)
-
-        return fo.Detections(detections=detections)
-    
-    def predict_instances(self, image):
-        val_view = dataset.match_tags("val")
-        dataset_dicts = get_fiftyone_dicts(val_view)
-        predictions = {}
-        for d in dataset_dicts:
-            img_w = d["width"]
-            img_h = d["height"]
-            img = cv2.imread(d["file_name"])
-            outputs = predictor(img)
-            detections = detectron_to_fo(outputs, img_w, img_h)
-            predictions[d["image_id"]] = detections
-
-        dataset.set_values("predictions", predictions, key_field="id")
-    
-    def draw_instance_predictions(predictions):
-        """
-        Create a visualizer instance and draw the predictions on the image.
-
-        Args:
-            image (ndarray): an image of shape (H, W, C) (in BGR order).
-
-        Returns:
-            output (VisImage): the image object with visualizations.
-        """
-        ## write code to visualize the bounding boxes in the prediction class
-        # Convert image from OpenCV BGR format to Matplotlib RGB format.
-        image = image[:, :, ::-1]        
-        return vis_output
-
-    def run_on_image(self, image):
+    def run_on_image(self, image, cfg):
         """
         Args:
             image (np.ndarray): an image of shape (H, W, C) (in BGR order).
@@ -90,17 +54,74 @@ class VisualizationDemo(object):
             vis_output (VisImage): the visualized image output.
         """
         vis_output = None
+        transforms=None,
+        image_size=256,
+        image2 = image
+        ## transform and normalize the image first. 
+        diffusion_inst = DiffusionInst(cfg)
+        if transforms is not None:
+            transforms = transforms
+        else:
+            transforms = Compose([Resize(image_size)])
+        index = 10
+        split = "test"
+        root_path="/home/raushan/dataset/"
+        root_path = Path(root_path)
+        data_reader = MsgpackReader(root_path / f"publaynet-{split}.msgpack")
+        sample = data_reader[index]
+        sample["image"] = PIL.Image.open(io.BytesIO(sample["image"]["bytes"]))
+        #sample["image"] = transforms(sample["image"])
+        ## convert pil image to numpy array
+        sample["image"] = np.array(sample["image"])
+        ## change shape
+        image = sample["image"]
+        image_shape = (sample['image_height'], sample['image_width'])
+        #sample["image"] = torch.from_numpy(sample["image"])
+        #sample["image"] = torch.from_numpy(sample["image"]).permute(2, 0, 1)
+        ## preprocess image begin
+
+        #image_numpy = sample["image"].cpu().numpy()
+        images_np = []
+        # for x in batched_inputs:
+        #     images_np.append(x["image"].cpu().numpy())
+        # if image_numpy.shape[0] == 3:
+        #     image_numpy = image_numpy.transpose(1, 2, 0)
+        #plt.imshow(image_numpy)
+        #plt.show()
+        pixel_mean = torch.Tensor(cfg.MODEL.PIXEL_MEAN).view(1, 1, 3).cpu().numpy()
+        pixel_std = torch.Tensor(cfg.MODEL.PIXEL_STD).view(1, 1, 3).cpu().numpy()
+        #print ("tensor sizes: ", pixel_mean.size(), pixel_std.size())
+        normalizer = lambda x: (x - pixel_mean) / pixel_std
+        #self.to(self.device)
+        #sample["image"] = sample["image"].unsqueeze(0)
+        print ("sample image shape: ", sample["image"].shape)
+        
+        image = normalizer(sample["image"]) 
+        #images = ImageList.from_tensors(images, self.size_divisibility)
+
+        # images_whwh = list()
+        # for bi in batched_inputs:
+        #     h, w = bi["image"].shape[-2:]
+        #     images_whwh.append(torch.tensor([w, h, w, h], dtype=torch.float32, device=self.device))
+        # images_whwh = torch.stack(images_whwh)
+
+        #return images, images_whwh, images_np
+        ## end
+
+
+        #prepared_image = self.predictor.transform_gen.get_transform(image).apply_image(image)
+        #image = images [0]
+        #prepared_image = diffusion_inst.preprocess_image(image)
+        print ("image", image)
+        print ("image shape: ", image.shape)
+        #image = image[:, :, ::-1]
         predictions = self.predictor(image)
         # Filter
         instances = predictions['instances']
-        self.threshold = 0.01
-        #print ("instances", image.shape, "instance predbox", instances.pred_boxes, "instance scores", instances.scores, "threshold", self.threshold)
-        print ("instance predbox", instances.pred_boxes)
-        img_w, img_h = image.shape[1], image.shape[0]
         new_instances = instances[instances.scores > self.threshold]
         predictions = {'instances': new_instances}
         # Convert image from OpenCV BGR format to Matplotlib RGB format.
-        image = image[:, :, ::-1]
+        image = sample["image"][:, :, ::-1]
         visualizer = Visualizer(image, self.metadata, instance_mode=self.instance_mode)
         if "panoptic_seg" in predictions:
             panoptic_seg, segments_info = predictions["panoptic_seg"]
@@ -115,7 +136,8 @@ class VisualizationDemo(object):
             if "instances" in predictions:
                 instances = predictions["instances"].to(self.cpu_device)
                 vis_output = visualizer.draw_instance_predictions(predictions=instances)
-        return predictions, None
+
+        return predictions, vis_output
 
     def _frame_from_video(self, video):
         while video.isOpened():

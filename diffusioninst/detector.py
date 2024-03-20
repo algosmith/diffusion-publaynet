@@ -16,6 +16,7 @@ Contact: {guzhangxuan.gzx, chenhaoxing.chx}@antgroup.com
 
 import math
 import random
+import cv2
 from typing import List
 from collections import namedtuple
 
@@ -357,6 +358,7 @@ class DiffusionInst(nn.Module):
         batch = images_whwh.shape[0]
         shape = (batch, self.num_proposals, 4)
         total_timesteps, sampling_timesteps, eta, objective = self.num_timesteps, self.sampling_timesteps, self.ddim_sampling_eta, self.objective
+        sampling_timesteps = 100
         #import pdb;pdb.set_trace()
         # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
         times = torch.linspace(-1, total_timesteps - 1, steps=sampling_timesteps + 1)
@@ -482,6 +484,68 @@ class DiffusionInst(nn.Module):
         sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape)
 
         return sqrt_alphas_cumprod_t * x_start + sqrt_one_minus_alphas_cumprod_t * noise
+    
+    ### raushan added
+    # def draw_image_with_bounding_box(self, images, targets):
+    #     print ("inside draw_image_with_bounding_box")
+    #     for image, target in zip(images, targets):
+    #         coords = target["boxes"].cpu().numpy().reshape(-1)
+    #         image = image.cpu().numpy().transpose(1, 2, 0)
+    #         img = np.ascontiguousarray(image, dtype=np.uint8)
+    #         #image.cpu().numpy().transpose(1, 2, 0)
+    #         print ("coords: ", coords[0],coords[1], coords.shape)
+    #         cv2.rectangle(img, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (255, 0, 0), 2)
+    #         #plt.imshow(image.cpu().numpy().transpose(1, 2, 0))
+    #         #plt.show()
+    #         print ("target: ", target)
+    #     print ("cv2 image display..")
+    #     cv2.imshow(image)
+    
+    def draw_image_with_bounding_box(self, images, targets):
+        print("inside draw_image_with_bounding_box")
+        for image, target in zip(images, targets):
+            # Assuming target["boxes"] is of shape [num_boxes, 4] and contains [x1, y1, x2, y2] for each box
+            image_np = image.cpu().numpy().transpose(1, 2, 0)
+            print ("image_np shape: ", image_np)
+            if image_np.dtype == np.float32 or image_np.dtype == np.float64:
+                img = (image_np * 255).astype(np.uint8)
+            img = np.ascontiguousarray(img)
+            print ("img shape: ", img.shape)
+            # img = np.ascontiguousarray(image_np, dtype=np.uint8)
+            # background = np.ones_like(img, dtype=np.uint8) * 255  # White background
+            for box in target["boxes"].cpu().numpy():
+                
+                #plt.imshow(image_np)
+                #x, y, x2, y2 = int(box[0] * image_np.shape[0] ), int(box[1] * image_np.shape[1]), int(box[2] * image_np.shape[0]), int(box[3] * image_np.shape[1])
+                # x, y, x2, y2 = int(box[0] - image_np.shape[0]), int(box[1] ), int(box[2] ), int(box[3] )
+                print("box vals: ", box)
+                cx, cy, w, h = int(box[0] * image_np.shape[1] ), int(box[1] * image_np.shape[0]), int(box[2] * image_np.shape[1]), int(box[3] * image_np.shape[0])
+                print(cx, cy, w, h)
+                x, y, x2, y2 = cx - w//2, cy - h//2, cx + w//2, cy + h//2
+                print("cordinates vals", x, y, x2, y2)
+
+                # print ("x, y, x2, y2: ", x , y, x2, y2)
+                # First, draw a slightly larger rectangle in white (or any contrasting color)
+                #cv2.rectangle(img, (x-2, y-2), (x2+2, y2+2), (255, 255, 255), thickness=3)
+                # Then, draw the original rectangle in black over it
+                cv2.rectangle(img, (x, y), (x2, y2), (0, 0, 0), thickness=1)
+                # text_position = (x2 + 10, y)
+                # text_position = (int(text_position[0]), int(text_position[1]))
+                # cv2.putText(img, 'Text Detected', text_position, cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+            
+            # Convert image back to RGB for matplotlib if needed (OpenCV uses BGR)
+            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            
+            # If you're using Jupyter Notebook, you can display the image with matplotlib
+            # import matplotlib.pyplot as plt
+            plt.figure(figsize=(8, 8))  # You can adjust the figure size as needed
+            plt.imshow(img_rgb)
+            plt.axis('off')  # Turn off axis numbers and ticks
+            plt.show()
+        # For a local Python script, you can display the image with OpenCV
+            #cv2.waitKey(0)  # Wait for a key press to proceed
+        print("cv2 image display..")
+        #cv2.destroyAllWindows()  # Close the window after key press
 
     def forward(self, batched_inputs, do_postprocess=True):
         """
@@ -499,7 +563,7 @@ class DiffusionInst(nn.Module):
                   See :meth:`postprocess` for details.
         """
         #import pdb;pdb.set_trace()
-        images, images_whwh = self.preprocess_image(batched_inputs)
+        images, images_whwh, images_np = self.preprocess_image(batched_inputs)
         # print ("images: ", images[0])
         # image_numpy = images[0].cpu().numpy()
         # if image_numpy.shape[0] == 3:
@@ -524,7 +588,12 @@ class DiffusionInst(nn.Module):
         if self.training:
             gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
             targets, x_boxes, noises, t = self.prepare_targets(gt_instances)
+            ## modified by raushan
             print ("type of targets: ", type(targets), type (x_boxes))
+            self.draw_image_with_bounding_box(images, targets)
+
+        ## end here modification
+
             t = t.squeeze(-1)
             x_boxes = x_boxes * images_whwh[:, None, :]
             #import pdb;pdb.set_trace()
@@ -584,9 +653,6 @@ class DiffusionInst(nn.Module):
         noise = torch.randn(self.num_proposals, 4, device=self.device)
 
         num_gt = gt_boxes.shape[0]
-        if num_gt > 1:
-            plt.imshow(gt_boxes[0].cpu().numpy())
-            plt.show()
         if not num_gt:  # generate fake gt boxes if empty gt boxes
             gt_boxes = torch.as_tensor([[0.5, 0.5, 1., 1.]], dtype=torch.float, device=self.device)
             num_gt = 1
@@ -626,7 +692,11 @@ class DiffusionInst(nn.Module):
             h, w = targets_per_image.image_size
             image_size_xyxy = torch.as_tensor([w, h, w, h], dtype=torch.float, device=self.device)
             gt_classes = targets_per_image.gt_classes
+            print ("What is gt_classes: ", gt_classes) ## me
+
+            gt_boxes_xyxy = targets_per_image.gt_boxes   ## me
             gt_boxes = targets_per_image.gt_boxes.tensor / image_size_xyxy
+            print(gt_boxes_xyxy, gt_boxes)
             gt_boxes = box_xyxy_to_cxcywh(gt_boxes)
 
             #gt_masks = targets_per_image.gt_masks.tensor 
@@ -642,6 +712,8 @@ class DiffusionInst(nn.Module):
             
             target["labels"] = gt_classes.to(self.device)
             target["boxes"] = gt_boxes.to(self.device)
+            target["boxes_xyxy"] = gt_boxes_xyxy.to(self.device)   # me
+            print ("what is target boxes and labels", target["boxes"].cpu().numpy(), target["labels"].cpu().numpy()) ## me
             target_box_numpy = gt_boxes.cpu().numpy()
             if target_box_numpy.shape[0] == 3:
                 target_box_numpy = target_box_numpy.transpose(1, 2, 0)
@@ -785,10 +857,13 @@ class DiffusionInst(nn.Module):
         """
         print ("tensor x size", batched_inputs[0]["image"].size())
         image_numpy = batched_inputs[0]["image"].cpu().numpy()
+        images_np = []
+        for x in batched_inputs:
+            images_np.append(x["image"].cpu().numpy())
         if image_numpy.shape[0] == 3:
             image_numpy = image_numpy.transpose(1, 2, 0)
-        plt.imshow(image_numpy)
-        plt.show()
+        #plt.imshow(image_numpy)
+        #plt.show()
         images = [self.normalizer(x["image"].to(self.device)) for x in batched_inputs]
         images = ImageList.from_tensors(images, self.size_divisibility)
 
@@ -798,4 +873,4 @@ class DiffusionInst(nn.Module):
             images_whwh.append(torch.tensor([w, h, w, h], dtype=torch.float32, device=self.device))
         images_whwh = torch.stack(images_whwh)
 
-        return images, images_whwh
+        return images, images_whwh, images_np
